@@ -3,7 +3,9 @@
 #include <ctime>
 #include <cuda_runtime.h>
 
-// Выделение памяти для одномерной матрицы
+#include <chrono>
+
+// Выделение памяти
 float* allocateMatrix(int size) {
     return new float[size * size];
 }
@@ -16,11 +18,11 @@ void freeMatrix(float* matrix) {
 // Заполнение матрицы случайными числами
 void fillMatrix(float* matrix, int size) {
     for (int i = 0; i < size * size; ++i) {
-        matrix[i] = static_cast<float>(rand()) / RAND_MAX * 10.0f;
+        matrix[i] = static_cast<float>(rand()) / RAND_MAX;
     }
 }
 
-// Печать матрицы
+
 void printMatrix(float* matrix, int size) {
     for (int i = 0; i < size; ++i) {
         for (int j = 0; j < size; ++j) {
@@ -41,6 +43,7 @@ void multiplyMatrixCPU(float* A, float* B, float* C, int size) {
             }
         }
     }
+
 }
 
 // Транспонирование матрицы на CPU
@@ -96,13 +99,13 @@ void transposeMatrixGPU(float* d_B, float* d_B_T, int size) {
 }
 
 // Вызов GPU для умножения матриц
-void multiplyMatrixGPU(float* A, float* B, float* C, int size) {
+double multiplyMatrixGPU(float* A, float* B, float* C, int size) {
     float* d_A, * d_B, * d_C;
     size_t bytes = size * size * sizeof(float);
 
-    cudaMalloc(&d_A, bytes);
-    cudaMalloc(&d_B, bytes);
-    cudaMalloc(&d_C, bytes);
+    cudaMalloc((void**)&d_A, bytes);
+    cudaMalloc((void**)&d_B, bytes);
+    cudaMalloc((void**)&d_C, bytes);
 
     cudaMemcpy(d_A, A, bytes, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, B, bytes, cudaMemcpyHostToDevice);
@@ -110,17 +113,30 @@ void multiplyMatrixGPU(float* A, float* B, float* C, int size) {
     dim3 block(16, 16);
     dim3 grid((size + block.x - 1) / block.x, (size + block.y - 1) / block.y);
 
+    //засечь время
+    //clock_t start = clock();
+    //multiplyMatrixGPUKernel << <grid, block >> > (d_A, d_B, d_C, size);
+    //clock_t end = clock();
+    //double time = static_cast<double>(end - start) / (CLOCKS_PER_SEC);
+    //засечь время
+
+	auto start = std::chrono::high_resolution_clock::now();
     multiplyMatrixGPUKernel << <grid, block >> > (d_A, d_B, d_C, size);
+	auto end = std::chrono::high_resolution_clock::now();
+	double time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
 
     cudaMemcpy(C, d_C, bytes, cudaMemcpyDeviceToHost);
 
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+
+    return time;
 }
 
 // Умножение на транспонированной матрице на GPU
-void multiplyMatrixWithTransposeGPU(float* A, float* B, float* C, int size) {
+double multiplyMatrixWithTransposeGPU(float* A, float* B, float* C, int size) {
     float* d_A, * d_B, * d_B_T, * d_C;
     size_t bytes = size * size * sizeof(float);
 
@@ -132,13 +148,19 @@ void multiplyMatrixWithTransposeGPU(float* A, float* B, float* C, int size) {
     cudaMemcpy(d_A, A, bytes, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, B, bytes, cudaMemcpyHostToDevice);
 
-    // Транспонирование на GPU
-    transposeMatrixGPU(d_B, d_B_T, size);
-
     dim3 block(16, 16);
     dim3 grid((size + block.x - 1) / block.x, (size + block.y - 1) / block.y);
 
+    // Транспонирование на GPU
+
+    //время
+    clock_t start = clock();
+    transposeMatrixGPU(d_B, d_B_T, size);
+    //время
+
     multiplyMatrixGPUKernel << <grid, block >> > (d_A, d_B_T, d_C, size);
+    clock_t end = clock();
+    double time = static_cast<double>(end - start) / (CLOCKS_PER_SEC / 1000);
 
     cudaMemcpy(C, d_C, bytes, cudaMemcpyDeviceToHost);
 
@@ -146,6 +168,8 @@ void multiplyMatrixWithTransposeGPU(float* A, float* B, float* C, int size) {
     cudaFree(d_B);
     cudaFree(d_B_T);
     cudaFree(d_C);
+
+    return time;
 }
 
 // Измерение времени выполнения
@@ -172,7 +196,7 @@ void measureTime() {
         clock_t start = clock();
         multiplyMatrixCPU(A, B, C, size);
         clock_t end = clock();
-        double cpu_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        double cpu_time = static_cast<double>(end - start) / (CLOCKS_PER_SEC / 1000);
         if (size == 2) {
             std::cout << "Result (CPU):" << std::endl;
             printMatrix(C, size);
@@ -183,27 +207,25 @@ void measureTime() {
         transposeMatrix(B, B_T, size);
         multiplyMatrixWithTranspose(A, B_T, C, size);
         end = clock();
-        double transposed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        double transposed_time = static_cast<double>(end - start) / (CLOCKS_PER_SEC / 1000);
         if (size == 2) {
             std::cout << "Result (Transposed CPU):" << std::endl;
             printMatrix(C, size);
         }
 
         // GPU
-        start = clock();
-        multiplyMatrixGPU(A, B, C, size);
-        end = clock();
-        double gpu_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        double gpu_time = multiplyMatrixGPU(A, B, C, size);
         if (size == 2) {
             std::cout << "Result (GPU):" << std::endl;
             printMatrix(C, size);
         }
 
         // Transposed GPU
-        start = clock();
-        multiplyMatrixWithTransposeGPU(A, B, C, size);
-        end = clock();
-        double transposed_gpu_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        //start = clock();
+        //multiplyMatrixWithTransposeGPU(A, B, C, size);
+        //end = clock();
+        //double transposed_gpu_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        double transposed_gpu_time = multiplyMatrixWithTransposeGPU(A, B, C, size);
 
         std::cout << "Matrix size: " << size << "x" << size << std::endl;
         std::cout << "CPU time: " << cpu_time << " seconds" << std::endl;
